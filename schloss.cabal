@@ -17,7 +17,15 @@ cabal-version:       >=1.10
 
 executable schloss
   default-language: Haskell2010
-  default-extensions: OverloadedStrings, TypeFamilies, NumericUnderscores, DeriveGeneric, DuplicateRecordFields, NamedFieldPuns, TypeApplications, DataKinds
+  default-extensions: OverloadedStrings
+                    , TypeFamilies
+                    , NumericUnderscores
+                    , DeriveGeneric
+                    , DuplicateRecordFields
+                    , NamedFieldPuns
+                    , TypeApplications
+                    , DataKinds
+                    , TypeOperators
 
   ghc-options: -Wall -fwarn-missing-signatures
 
@@ -26,11 +34,16 @@ executable schloss
 
   build-depends: base >=4.12 && <4.13
                , uuid
-               , text
-               , wai
-               , wai-extra
-               , warp
-               , bytestring
-               , http-types
-               , postgresql-simple
                , generic-lens
+               , bytestring >= 0.10
+               , text >= 1.2
+               , aeson >= 1.2
+               , servant
+               , servant-server
+               , warp >= 3.2
+               , wai-extra
+               , wai >= 3.2
+               , http-types >= 0.12
+               , postgresql-simple >= 0.5
+               , resource-pool >= 0.2
+               , transformers

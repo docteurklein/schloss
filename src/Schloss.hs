@@ -4,7 +4,6 @@ module Schloss (
     Actor,
 ) where
 
-import Data.UUID
 
 type family Command = result
 type family Event = result
