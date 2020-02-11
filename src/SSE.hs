@@ -1,10 +1,14 @@
 module SSE(sse) where
 
 import Data.ByteString.Builder (string8)
+import Data.Text(Text, unpack)
+import Data.String
 import Control.Concurrent (forkIO)
 import Control.Concurrent.Chan
 import Control.Monad
-import Network.Wai.EventSource (ServerEvent(..), eventSourceAppChan)
+import Network.Wai (Application, pathInfo, responseLBS)
+import Network.HTTP.Types.Status (status400)
+import Network.Wai.EventSource (ServerEvent(..), eventSourceAppChan, eventSourceAppIO)
 import Network.Wai.Handler.Warp (runEnv)
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.Notification
@@ -17,10 +21,20 @@ writeToChan chan conn = forever $ do
                                  Nothing
                                  [string8 $ show $ notification]
 
-sse :: IO ()
-sse = do
+eventIO :: String -> IO ServerEvent
+eventIO topic = do
     conn <- connectPostgreSQL ""
-    execute_ conn "listen foo"
+    putStrLn topic
+    execute conn "listen ?" (topic)
     chan <- newChan
     _ <- forkIO $ (writeToChan chan conn)
-    runEnv 8080 $ eventSourceAppChan chan
+    readChan chan
+
+app :: Application
+app req respond =
+    case pathInfo req of
+        [topic] -> eventSourceAppIO (eventIO $ unpack topic) req respond
+        _ -> respond $ responseLBS status400 [] "/:topic"
+
+sse :: IO ()
+sse = runEnv 8080 app
