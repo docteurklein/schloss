@@ -1,13 +1,8 @@
 module Main where
 
+import Data.Text (Text)
 import Data.ByteString.Builder (string8)
 import Data.ByteString (ByteString)
-import Data.String
-import Data.Text (Text, unpack, pack)
-import Control.Concurrent (forkIO)
-import Control.Concurrent.Chan
-import Control.Exception (bracket)
-import Control.Monad
 import Control.Monad.IO.Class
 import Network.Wai.EventSource (ServerEvent(..), eventSourceAppIO)
 import Network.Wai.Handler.Warp (runEnv)
@@ -16,41 +11,41 @@ import Database.PostgreSQL.Simple.Notification
 import Database.PostgreSQL.Simple.FromRow
 import Database.PostgreSQL.Simple.Types
 import Data.Pool
-import Network.Wai.Handler.Warp
 import Data.Aeson
 import GHC.Generics
 import Servant
+import Text.RawString.QQ
 
 main :: IO ()
 main = do
     pool <- initConnectionPool ""
-    withResource pool $ \conn ->
-        initDB conn
+    _ <- withResource pool $ \conn ->
+        execute_ conn [r|
+            create table if not exists message (
+                message_id uuid primary key default uuid_generate_v4(),
+                content text not null,
+                at timestamptz not null default clock_timestamp()
+            )
+        |]
     runApp pool
 
-type DBConnectionString = ByteString
-
-newtype Message = Message { content :: String }
-  deriving (Show, Generic)
-
-instance FromJSON Message
-instance ToJSON Message
+data Message = Message { content :: Text }
+    deriving (
+        Show
+      , Generic
+      , FromJSON
+      , ToJSON
+    )
 
 instance FromRow Message where
     fromRow = Message <$> field
 
 type API = ReqBody '[JSON] Message :> Post '[JSON] NoContent
       :<|> Get '[JSON] [Message]
-      :<|> "sse" :> Capture "topic" Text :> Raw
+      :<|> "sse" :> Capture "topic" Text :> QueryParam "since" Text :> Header "Last-Event-Id" Text :> Raw
 
 api :: Proxy API
 api = Proxy
-
-initDB :: Connection -> IO ()
-initDB conn = do
-  _ <- execute_ conn
-    "create table if not exists message (message_id uuid primary key default uuid_generate_v4(), content text not null)"
-  return ()
 
 server :: Pool Connection -> Server API
 server pool = postMessage :<|> getMessages :<|> sse
@@ -65,25 +60,30 @@ server pool = postMessage :<|> getMessages :<|> sse
         getMessages = liftIO $ withResource pool $ \conn ->
             query_ conn "select content from message"
 
-        sse topic = Tagged $ \req respond -> do
-            withResource pool $ \conn ->
-                execute conn "listen ?" (Only $ Identifier topic)
-            withResource pool $ \conn ->
-                eventSourceAppIO (buildNotification conn topic) req respond
+        sse topic since lastEventId = Tagged $ \req respond -> do
+            putStrLn $ show since
+            putStrLn $ show lastEventId
+            --_ <- withResource pool $ \conn -> do
+            --    notifications <- query conn "select content from message where at <= now()" ()
+            --    eventSourceAppIO (since notifications) req respond
 
-        buildNotification :: Connection -> Text -> IO ServerEvent
-        buildNotification conn topic = do
-            notification <- getNotification conn
-            return $ ServerEvent (Just $ string8 $ show $ notificationChannel notification)
-                                 Nothing
-                                 [string8 $ show $ notificationData notification]
+            eventSourceAppIO (listen pool topic) req respond
+
+        listen :: Pool Connection -> Text -> IO ServerEvent
+        listen pool' topic =
+            withResource pool' $ \conn -> do
+                _ <- execute conn "listen ?" (Only $ Identifier topic)
+                notification <- getNotification conn
+                return $ ServerEvent (Just $ string8 $ show $ notificationChannel notification)
+                                     Nothing
+                                     [string8 $ show $ notificationData notification]
 
 
 runApp :: Pool Connection -> IO ()
-runApp pool = runEnv 8888 (serve api $ server pool)
-initConnectionPool :: DBConnectionString -> IO (Pool Connection)
-initConnectionPool pooltr =
-  createPool (connectPostgreSQL pooltr)
+runApp pool = runEnv 8888 $ serve api $ server pool
+initConnectionPool :: ByteString -> IO (Pool Connection)
+initConnectionPool dsn =
+  createPool (connectPostgreSQL dsn)
              close
              2 -- stripes
              60 -- unused connections are kept open for a minute
