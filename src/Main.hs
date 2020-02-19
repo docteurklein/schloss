@@ -1,10 +1,11 @@
 module Main where
 
-import Data.Text (Text, pack)
+import Data.Text (Text)
 import Data.Int
 import PostgreSQL.Binary.Data
 import Data.ByteString.Builder (string8)
 import Data.ByteString (ByteString)
+import Data.ByteString.Lazy.Char8 (pack)
 import qualified Data.ByteString.Lazy as LBS
 import Control.Monad.IO.Class
 import Network.Wai.EventSource (ServerEvent(..), eventSourceAppIO)
@@ -18,7 +19,6 @@ import Hasql.Pool
 import Data.Aeson
 import GHC.Generics
 import Servant
-import Text.RawString.QQ
 
 main :: IO ()
 main = do
@@ -63,7 +63,7 @@ server pool = postMessage :<|> getMessages
             result <- liftIO $ use pool $ Session.statement (content msg) insertMessage
             case result of
                 Right messages -> pure NoContent
-                Left error -> parseUsageError error
+                Left e -> parseUsageError e
             where
                 insertMessage = [TH.resultlessStatement|insert into message (content) values ($1::text)|]
 
@@ -72,9 +72,9 @@ server pool = postMessage :<|> getMessages
             result <- liftIO $ use pool $ Session.statement () selectMessages
             case result of
                 Right messages -> pure messages
-                Left error -> parseUsageError error
+                Left e -> parseUsageError e
 
-        parseUsageError _ = throwError err500 {errBody = LBS.fromStrict "error"}
+        parseUsageError e = throwError err500 {errBody = pack $ show e}
 
 selectMessages :: Statement () (Vector (Text))
 selectMessages = [TH.vectorStatement|select content::text from message|]

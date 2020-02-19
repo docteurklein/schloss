@@ -39,22 +39,20 @@ executable schloss
   hs-source-dirs: src
   main-is: Main.hs
 
-  build-depends: base >=4.12 && <4.13
+  build-depends: base
                , uuid
                , generic-lens
-               , bytestring >= 0.10
-               , text >= 1.2
-               , aeson >= 1.2
+               , bytestring
+               , text
+               , aeson
                , servant
                , servant-server
-               , warp >= 3.2
+               , warp
                , wai-extra
-               , wai >= 3.2
-               , http-types >= 0.12
+               , wai
+               , http-types
                , hasql
                , hasql-th
                , hasql-pool
                , postgresql-binary
-               , resource-pool >= 0.2
                , transformers
-               , raw-strings-qq
