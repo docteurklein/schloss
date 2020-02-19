@@ -21,9 +21,9 @@ executable schloss
                     , TypeFamilies
                     , NumericUnderscores
                     , DeriveGeneric
-                    , DerivingVia
+                    --, DerivingVia
                     , DeriveAnyClass
-                    , GeneralisedNewtypeDeriving
+                    , GeneralizedNewtypeDeriving
                     , DuplicateRecordFields
                     , NamedFieldPuns
                     , TypeApplications
@@ -32,6 +32,7 @@ executable schloss
                     , QuasiQuotes
                     , LambdaCase
                     , BlockArguments
+                    , FlexibleContexts
 
   ghc-options: -Wall -fwarn-missing-signatures
 
@@ -50,7 +51,10 @@ executable schloss
                , wai-extra
                , wai >= 3.2
                , http-types >= 0.12
-               , postgresql-simple >= 0.5
+               , hasql
+               , hasql-th
+               , hasql-pool
+               , postgresql-binary
                , resource-pool >= 0.2
                , transformers
                , raw-strings-qq
