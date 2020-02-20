@@ -56,3 +56,5 @@ executable schloss
                , hasql-pool
                , postgresql-binary
                , transformers
+               , fast-logger
+               , mtl

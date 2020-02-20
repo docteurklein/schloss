@@ -8,6 +8,7 @@ import Data.ByteString (ByteString)
 import Data.ByteString.Lazy.Char8 (pack)
 import qualified Data.ByteString.Lazy as LBS
 import Control.Monad.IO.Class
+import Control.Monad.Reader
 import Network.Wai.EventSource (ServerEvent(..), eventSourceAppIO)
 import Network.Wai.Handler.Warp (runEnv)
 import Hasql.Session (Session)
@@ -19,29 +20,12 @@ import Hasql.Pool
 import Data.Aeson
 import GHC.Generics
 import Servant
+import System.Log.FastLogger ( ToLogStr(..)
+                             , LoggerSet
+                             , defaultBufSize
+                             , newStdoutLoggerSet
+                             , pushLogStrLn )
 
-main :: IO ()
-main = do
-  pool <- acquire settings
-  t <- use pool $ Session.sql initSchema
-  runApp pool
-  putStrLn $ show t
-  where
-    settings = (1, 1, "")
-
-runApp :: Pool -> IO ()
-runApp pool = runEnv 8888 $ serve api $ server pool
-
-initSchema = [TH.uncheckedSql|
-    create table if not exists message (
-        message_id uuid primary key default uuid_generate_v4(),
-        content text not null,
-        at timestamptz not null default clock_timestamp()
-    )
-|]
-
-data Message = Message { content :: Text }
-    deriving (Show, Generic, FromJSON, ToJSON)
 
 type API = ReqBody '[JSON] Message :> Post '[JSON] NoContent
       :<|> Get '[JSON] (Vector Text)
@@ -54,12 +38,44 @@ type API = ReqBody '[JSON] Message :> Post '[JSON] NoContent
 api :: Proxy API
 api = Proxy
 
-server :: Pool -> Server API
-server pool = postMessage :<|> getMessages
+data Message = Message { content :: Text }
+    deriving (Show, Generic, FromJSON, ToJSON)
+
+data AppCtx = AppCtx {
+    logger :: LoggerSet
+  , pool :: Pool
+}
+
+main :: IO ()
+main = do
+    pool <- acquire (1, 1, "")
+    use pool $ Session.sql initSchema
+    logger <- newStdoutLoggerSet defaultBufSize
+    let ctx = AppCtx logger pool
+    runEnv 8888 $ mkApp ctx
+
+mkApp :: AppCtx -> Application
+mkApp ctx = serve api $ hoistServer api (flip runReaderT ctx) server
+
+initSchema = [TH.uncheckedSql|
+    create table if not exists message (
+        message_id uuid primary key default uuid_generate_v4(),
+        content text not null,
+        at timestamptz not null default clock_timestamp()
+    )
+|]
+
+type AppM = ReaderT AppCtx Handler
+
+server :: ServerT API AppM
+server = postMessage :<|> getMessages
               -- :<|> sse
     where
-        postMessage :: Message -> Handler NoContent
+        postMessage :: Message -> AppM NoContent
         postMessage msg = do
+            logset <- asks logger
+            liftIO $ pushLogStrLn logset $ toLogStr $ ("post message: " ++ show (content msg))
+            pool <- asks pool
             result <- liftIO $ use pool $ Session.statement (content msg) insertMessage
             case result of
                 Right messages -> pure NoContent
@@ -67,8 +83,11 @@ server pool = postMessage :<|> getMessages
             where
                 insertMessage = [TH.resultlessStatement|insert into message (content) values ($1::text)|]
 
-        getMessages :: Handler (Vector Text)
+        getMessages :: AppM (Vector Text)
         getMessages = do
+            logset <- asks logger
+            liftIO $ pushLogStrLn logset $ "get messages"
+            pool <- asks pool
             result <- liftIO $ use pool $ Session.statement () selectMessages
             case result of
                 Right messages -> pure messages
