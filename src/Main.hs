@@ -21,6 +21,7 @@ import Hasql.Pool
 import Data.Aeson
 import GHC.Generics
 import Servant
+import Servant.RawM(RawM, RawM')
 import System.Log.FastLogger ( ToLogStr(..)
                              , LoggerSet
                              , defaultBufSize
@@ -34,7 +35,7 @@ type API = ReqBody '[JSON] Message :> Post '[JSON] NoContent
            :> Capture "topic" Text
            :> QueryParam "since" Text
            :> Header "Last-Event-Id" Text
-           :> Raw
+           :> RawM
 
 api :: Proxy API
 api = Proxy
@@ -45,14 +46,16 @@ data Message = Message { content :: Text }
 data AppCtx = AppCtx {
     logger :: LoggerSet
   , pool :: Pool
+  , conn :: Connection.Connection
 }
 
 main :: IO ()
 main = do
     pool <- acquire (1, 1, "")
+    Right conn <- Connection.acquire ""
     use pool $ Session.sql initSchema
     logger <- newStdoutLoggerSet defaultBufSize
-    let ctx = AppCtx logger pool
+    let ctx = AppCtx logger pool conn
     runEnv 8888 $ mkApp ctx
 
 mkApp :: AppCtx -> Application
@@ -66,7 +69,7 @@ initSchema = [TH.uncheckedSql|
     )
 |]
 
-type AppM = ReaderT AppCtx Handler
+type AppM = ReaderT AppCtx IO
 
 server :: ServerT API AppM
 server = postMessage :<|> getMessages :<|> sse
@@ -96,6 +99,7 @@ server = postMessage :<|> getMessages :<|> sse
                 selectMessages :: Statement () (Vector (Text))
                 selectMessages = [TH.vectorStatement|select content::text from message|]
 
+        sse :: Text -> Maybe Text -> Maybe Text -> ServerT (RawM' serverType) m
         sse topic since lastEventId = Tagged $ \req respond -> do
             putStrLn $ show since
             putStrLn $ show lastEventId
@@ -107,17 +111,14 @@ server = postMessage :<|> getMessages :<|> sse
             where
                 listen :: Text -> IO ServerEvent
                 listen topic = do
-                    pool <- asks pool
-                    result <- liftIO $ use pool $ Session.sql [TH.uncheckedSql|listen "test"|]
-                    notification <- getNotification $ use pool
-                    case result of
-                        Right notification -> event notification
-                        Left e -> error "nope"
-
-                    where
-                        event notification' = return $ ServerEvent (Just $ string8 $ show $ notificationChannel notification')
-                                                         Nothing
-                                                         [string8 $ show $ notificationData notification']
+                    -- pool <- asks pool
+                    -- result <- liftIO $ use pool $ Session.sql [TH.uncheckedSql|listen "test"|]
+                    -- conn <- asks conn
+                    -- notification <- getNotification conn
+                    -- liftIO $ putStrLn $ show notification
+                    pure $ ServerEvent (Just $ string8 $ show $ "test")
+                                 Nothing
+                                 [string8 $ show $ "test"]
 
         parseUsageError e = throwError err500 {errBody = pack $ show e}
 

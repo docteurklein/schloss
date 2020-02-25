@@ -63,6 +63,7 @@ executable schloss
                , aeson
                , servant
                , servant-server
+               , servant-rawm
                , warp
                , wai-extra
                , wai
