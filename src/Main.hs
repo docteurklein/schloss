@@ -9,7 +9,6 @@ import Data.ByteString.Lazy.Char8 (pack)
 import qualified Data.ByteString.Lazy as LBS
 import Control.Monad.IO.Class
 import Control.Monad.Reader
-import Network.Wai.EventSource (ServerEvent(..), eventSourceAppIO)
 import Network.Wai.Handler.Warp (runEnv)
 import Hasql.Session (Session)
 import Hasql.Statement (Statement)
@@ -21,7 +20,8 @@ import Hasql.Pool
 import Data.Aeson
 import GHC.Generics
 import Servant
-import Servant.RawM(RawM, RawM')
+import Servant.API.Stream
+import Servant.Types.SourceT
 import System.Log.FastLogger ( ToLogStr(..)
                              , LoggerSet
                              , defaultBufSize
@@ -29,21 +29,21 @@ import System.Log.FastLogger ( ToLogStr(..)
                              , pushLogStrLn )
 
 
-type API = ReqBody '[JSON] Message :> Post '[JSON] NoContent
+type Api = ReqBody '[JSON] Message :> Post '[JSON] NoContent
       :<|> Get '[JSON] (Vector Text)
       :<|> "sse"
            :> Capture "topic" Text
            :> QueryParam "since" Text
            :> Header "Last-Event-Id" Text
-           :> RawM
+           :> StreamGet NewlineFraming JSON (SourceIO Text)
 
-api :: Proxy API
+api :: Proxy Api
 api = Proxy
 
 data Message = Message { content :: Text }
     deriving (Show, Generic, FromJSON, ToJSON)
 
-data AppCtx = AppCtx {
+data Config = Config {
     logger :: LoggerSet
   , pool :: Pool
   , conn :: Connection.Connection
@@ -55,11 +55,10 @@ main = do
     Right conn <- Connection.acquire ""
     use pool $ Session.sql initSchema
     logger <- newStdoutLoggerSet defaultBufSize
-    let ctx = AppCtx logger pool conn
-    runEnv 8888 $ mkApp ctx
+    runEnv 8888 $ mkApp $ Config logger pool conn
 
-mkApp :: AppCtx -> Application
-mkApp ctx = serve api $ hoistServer api (flip runReaderT ctx) server
+mkApp :: Config -> Application
+mkApp config = serve api $ hoistServer api (flip runReaderT config) server
 
 initSchema = [TH.uncheckedSql|
     create table if not exists message (
@@ -69,9 +68,9 @@ initSchema = [TH.uncheckedSql|
     )
 |]
 
-type AppM = ReaderT AppCtx IO
+type AppM = ReaderT Config Handler
 
-server :: ServerT API AppM
+server :: ServerT Api AppM
 server = postMessage :<|> getMessages :<|> sse
     where
         postMessage :: Message -> AppM NoContent
@@ -99,26 +98,9 @@ server = postMessage :<|> getMessages :<|> sse
                 selectMessages :: Statement () (Vector (Text))
                 selectMessages = [TH.vectorStatement|select content::text from message|]
 
-        sse :: Text -> Maybe Text -> Maybe Text -> ServerT (RawM' serverType) m
-        sse topic since lastEventId = Tagged $ \req respond -> do
-            putStrLn $ show since
-            putStrLn $ show lastEventId
-            -- --_ <- withResource pool $ \conn -> do
-            -- --    notifications <- query conn "select content from message where at <= now()" ()
-            -- --    eventSourceAppIO (since notifications) req respond
-
-            eventSourceAppIO (listen topic) req respond
-            where
-                listen :: Text -> IO ServerEvent
-                listen topic = do
-                    -- pool <- asks pool
-                    -- result <- liftIO $ use pool $ Session.sql [TH.uncheckedSql|listen "test"|]
-                    -- conn <- asks conn
-                    -- notification <- getNotification conn
-                    -- liftIO $ putStrLn $ show notification
-                    pure $ ServerEvent (Just $ string8 $ show $ "test")
-                                 Nothing
-                                 [string8 $ show $ "test"]
+        sse :: Text -> Maybe Text -> Maybe Text -> AppM (SourceIO Text)
+        sse topic since lastEventId = do
+            return $ source ["test", "test2"]
 
         parseUsageError e = throwError err500 {errBody = pack $ show e}
 

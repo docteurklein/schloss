@@ -15,20 +15,6 @@ build-type:          Simple
 -- extra-source-files:  CHANGELOG.md
 cabal-version:       >=1.10
 
-library hasql-notifications
-  default-language:    Haskell2010
-
-  ghc-options:         -Wall
-
-  hs-source-dirs:      hasql-notifications
-  exposed-modules:     Hasql.Notification
-
-  build-depends:       base
-                     , bytestring
-                     , hasql
-                     , mtl
-                     , postgresql-libpq
-
 executable schloss
   default-language: Haskell2010
   default-extensions: OverloadedStrings
@@ -63,9 +49,7 @@ executable schloss
                , aeson
                , servant
                , servant-server
-               , servant-rawm
                , warp
-               , wai-extra
                , wai
                , http-types
                , hasql
