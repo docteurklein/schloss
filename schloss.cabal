@@ -34,6 +34,8 @@ executable schloss
                     , BlockArguments
                     , FlexibleContexts
                     , ScopedTypeVariables
+                    , FlexibleInstances
+                    , MultiParamTypeClasses
 
   ghc-options: -Wall -fwarn-missing-signatures
 
@@ -51,7 +53,9 @@ executable schloss
                , servant-server
                , warp
                , wai
+               , wai-extra
                , http-types
+               , http-media
                , hasql
                , hasql-th
                , hasql-pool
