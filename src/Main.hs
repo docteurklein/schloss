@@ -83,12 +83,10 @@ main = do
     _ <- use pool $ Session.sql initSchema
     logger <- newStdoutLoggerSet defaultBufSize
     runEnv 8888 $ mkApp $ Config logger pool conn
-
-api :: Proxy Api
-api = Proxy
-
-mkApp :: Config -> Application
-mkApp config = serve api $ hoistServer api (flip runReaderT config) server
+    where
+        api :: Proxy Api
+        api = Proxy
+        mkApp config = serve api $ hoistServer api (flip runReaderT config) server
 
 initSchema = [TH.uncheckedSql|
     create table if not exists message (
@@ -144,11 +142,13 @@ server = postMessage :<|> getMessages :<|> sse
 
         sse :: Text -> Maybe Text -> Maybe Text -> AppM (SourceIO ServerEvent)
         sse topic _since _lastEventId = do
+            logset <- asks logger
+            liftIO $ pushLogStrLn logset $ "sse"
             conn <- asks conn
             _ <- liftIO $ Session.run (Session.sql ("listen test")) conn
             return $ fromAction (\_ -> False) $ do
                 notification <- getNotification conn
-                liftIO $ putStrLn $ show notification
+                liftIO $ print notification
                 return $ case notification of
                     Right notification' -> ServerEvent (Just $ string8 $ show $ notificationChannel notification')
                                      Nothing

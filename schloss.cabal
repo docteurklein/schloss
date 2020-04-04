@@ -18,11 +18,13 @@ cabal-version:       >=1.10
 executable schloss
   default-language: Haskell2010
   default-extensions: OverloadedStrings
+                    , ApplicativeDo
                     , TypeFamilies
                     , NumericUnderscores
                     , DeriveGeneric
                     --, DerivingVia
                     , DeriveAnyClass
+                    , StandaloneDeriving
                     , GeneralizedNewtypeDeriving
                     , DuplicateRecordFields
                     , NamedFieldPuns
@@ -64,3 +66,4 @@ executable schloss
                , fast-logger
                , mtl
                , hasql-notifications
+               , valor
