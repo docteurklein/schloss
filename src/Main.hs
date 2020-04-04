@@ -17,6 +17,8 @@ import qualified Hasql.Connection as Connection
 import qualified Hasql.TH as TH
 import Hasql.Pool (Pool, use, acquire)
 import Data.Aeson (FromJSON, ToJSON)
+import Data.Valor (Validatable, Validate)
+import Data.Functor.Identity (Identity (..))
 import GHC.Generics (Generic)
 import Servant (
         MimeRender(..)
@@ -41,8 +43,7 @@ import Servant (
       , serve
       , hoistServer
       , (:>)
-      , (:<|>)(..)
-      )
+      , (:<|>)(..))
 import Servant.API.Stream (SourceIO)
 import Network.HTTP.Media ((//))
 import Servant.Types.SourceT (fromAction)
@@ -65,10 +66,16 @@ instance Accept EventStream where
 instance MimeRender EventStream ServerEvent where
   mimeRender _ = maybe "" toLazyByteString . eventToBuilder
 
-data Message = Message {
-    content :: Text
-  , topic :: Text
-} deriving (Show, Generic, FromJSON, ToJSON)
+data Message' a = Message {
+    content :: Validatable a [String] Text
+  , topic :: Validatable a [String] Text
+}
+
+type Message = Message' Identity
+deriving instance Show Generic FromJSON ToJSON
+
+type MessageError = Message' Validate
+deriving instance Show MessageError
 
 data Config = Config {
     logger :: LoggerSet
