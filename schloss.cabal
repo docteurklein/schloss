@@ -32,6 +32,7 @@ executable schloss
                     , FlexibleInstances
                     , MultiParamTypeClasses
                     , PartialTypeSignatures
+                    , TypeSynonymInstances
 
   ghc-options: -Wall -fwarn-missing-signatures
 
@@ -39,8 +40,8 @@ executable schloss
   main-is: Main.hs
 
   build-depends: base
-               , uuid
-               , generic-lens
+               -- , uuid
+               -- , generic-lens
                , bytestring
                , text
                , aeson

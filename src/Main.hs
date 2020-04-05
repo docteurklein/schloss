@@ -4,14 +4,18 @@ import Data.Text (Text)
 import PostgreSQL.Binary.Data (Vector)
 import Data.ByteString.Builder (string8, toLazyByteString)
 import Data.ByteString.Lazy.Char8 (pack)
+-- import Control.Concurrent.Async (async)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (ReaderT, asks, runReaderT)
+import Control.Monad (void)
 import Network.Wai.Handler.Warp (runEnv)
 import Network.Wai.EventSource (ServerEvent(..))
 import Network.Wai.EventSource.EventStream (eventToBuilder)
+import Network.Wai.Middleware.RequestLogger (logStdoutDev)
 import Hasql.Session ()
 import Hasql.Statement (Statement)
-import Hasql.Notification (notificationChannel, notificationData, getNotification)
+-- import Hasql.Notification (notificationChannel, notificationData, getNotification)
+import Hasql.Notifications (listen, toPgIdentifier, waitForNotifications)
 import qualified Hasql.Session as Session
 import qualified Hasql.Connection as Connection
 import qualified Hasql.TH as TH
@@ -20,30 +24,11 @@ import Data.Aeson (FromJSON, ToJSON)
 import Data.Valor (Validatable, Validate)
 import Data.Functor.Identity (Identity (..))
 import GHC.Generics (Generic)
-import Servant (
-        MimeRender(..)
-      , Accept(..)
-      , ServerT
-      , Handler
-      , Application
-      , Proxy(..)
-      , Header
-      , QueryParam
-      , Capture
-      , StreamGet
-      , NewlineFraming
-      , JSON
-      , Get
-      , Post
-      , ReqBody
-      , NoContent(..)
-      , ServerError(..)
-      , err500
-      , throwError
-      , serve
-      , hoistServer
-      , (:>)
-      , (:<|>)(..))
+import Servant (MimeRender(..), Accept(..), ServerT, Handler, Application
+      , Proxy(..), Header, QueryParam, Capture, StreamGet, NewlineFraming
+      , JSON, Get, Post, ReqBody, NoContent(..), ServerError(..), err500
+      , throwError, serve, hoistServer, (:>), (:<|>)(..)
+      )
 import Servant.API.Stream (SourceIO)
 import Network.HTTP.Media ((//))
 import Servant.Types.SourceT (fromAction)
@@ -72,7 +57,10 @@ data Message' a = Message {
 }
 
 type Message = Message' Identity
-deriving instance Show Generic FromJSON ToJSON
+deriving instance Show Message
+deriving instance Generic Message
+deriving instance FromJSON Message
+deriving instance ToJSON Message
 
 type MessageError = Message' Validate
 deriving instance Show MessageError
@@ -124,8 +112,6 @@ server = postMessage :<|> getMessages :<|> sse
     where
         postMessage :: Message -> AppM NoContent
         postMessage msg = do
-            logset <- asks logger
-            liftIO $ pushLogStrLn logset $ toLogStr $ ("post message: " ++ show msg)
             pool <- asks pool
             result <- liftIO $ use pool $ Session.statement (content msg, topic msg) insertMessage
             case result of
@@ -136,8 +122,6 @@ server = postMessage :<|> getMessages :<|> sse
 
         getMessages :: AppM (Vector Text)
         getMessages = do
-            logset <- asks logger
-            liftIO $ pushLogStrLn logset $ "get messages"
             pool <- asks pool
             result <- liftIO $ use pool $ Session.statement () selectMessages
             case result of
@@ -152,12 +136,23 @@ server = postMessage :<|> getMessages :<|> sse
             logset <- asks logger
             liftIO $ pushLogStrLn logset $ "sse"
             conn <- asks conn
-            _ <- liftIO $ Session.run (Session.sql ("listen test")) conn
+            _ <- liftIO $ listen conn $ toPgIdentifier topic
             return $ fromAction (\_ -> False) $ do
-                notification <- getNotification conn
-                liftIO $ print notification
-                return $ case notification of
-                    Right notification' -> ServerEvent (Just $ string8 $ show $ notificationChannel notification')
-                                     Nothing
-                                     [string8 $ show $ notificationData notification']
-                    Left _ -> CloseEvent
+                waitForNotifications notificationHandler conn
+                return CloseEvent
+            where
+                notificationHandler channel payload = do
+                    return ServerEvent (Just $ string8 $ show $ "test")
+                                       Nothing
+                                       [string8 $ show $ "test"]
+
+
+            -- _ <- liftIO $ Session.run (Session.sql ("listen test")) conn
+            -- return $ fromAction (\_ -> False) $ do
+            --     notification <- getNotification conn
+            --     liftIO $ print notification
+            --     return $ case notification of
+            --         Right notification' -> ServerEvent (Just $ string8 $ show $ notificationChannel notification')
+            --                          Nothing
+            --                          [string8 $ show $ notificationData notification']
+            --         Left _ -> CloseEvent
