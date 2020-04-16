@@ -5,7 +5,7 @@ license-file:        LICENSE
 author:              Florian Klein
 maintainer:          florian.klein@free.fr
 build-type:          Simple
-cabal-version:       >=1.10
+cabal-version:       >=2.0
 
 executable schloss
   default-language: Haskell2010
@@ -33,15 +33,22 @@ executable schloss
                     , MultiParamTypeClasses
                     , PartialTypeSignatures
                     , TypeSynonymInstances
+                    , NoMonomorphismRestriction
 
-  ghc-options: -Wall -fwarn-missing-signatures
+  -- ghc-options: -Wall -fwarn-missing-signatures
 
   hs-source-dirs: src
   main-is: Main.hs
 
+  mixins: base hiding (Prelude)
+        , relude (Relude as Prelude)
+
   build-depends: base
-               -- , uuid
-               -- , generic-lens
+               , relude
+               , uuid
+               , time
+               , optics-core
+               , generic-optics
                , bytestring
                , text
                , aeson
@@ -54,10 +61,15 @@ executable schloss
                , http-media
                , hasql
                , hasql-th
+               , hasql-generic
+               , generics-sop
                , hasql-pool
                , postgresql-binary
+               -- , postgresql-libpq
                , transformers
                , fast-logger
                , mtl
                , hasql-notifications
                , valor
+               , siren-json
+               , resourcet

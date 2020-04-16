@@ -1,44 +1,56 @@
 module Main where
 
-import Data.Text (Text)
 import PostgreSQL.Binary.Data (Vector)
-import Data.ByteString.Builder (string8, toLazyByteString)
-import Data.ByteString.Lazy.Char8 (pack)
+import Data.ByteString.Builder (toLazyByteString)
+import Data.UUID (UUID, fromString)
+import Data.Time.Clock (UTCTime)
+-- import Data.UUID.V4 (nextRandom)
 -- import Control.Concurrent.Async (async)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (ReaderT, asks, runReaderT)
-import Control.Monad (void)
+import Control.Monad.Trans.Resource (ResourceT, runResourceT, allocate, release)
+import Control.Monad (void, forever)
+import Control.Concurrent (threadWaitRead, threadDelay)
+import Optics.Getter (view)
+import Data.Generics.Product.Fields (field)
+
 import Network.Wai.Handler.Warp (runEnv)
 import Network.Wai.EventSource (ServerEvent(..))
 import Network.Wai.EventSource.EventStream (eventToBuilder)
 import Network.Wai.Middleware.RequestLogger (logStdoutDev)
-import Hasql.Session ()
-import Hasql.Statement (Statement)
+import Hasql.Session (sql, statement, run, Session(..))
+import Hasql.Statement (Statement(..))
+-- import Hasql.Encoders (text)
+import Hasql.Decoders (singleRow)
+import Hasql.TH (uncheckedSql, singletonStatement, vectorStatement)
+import Hasql.Generic.HasRow (HasRow, mkRow)
+import Hasql.Generic.HasParams (HasParams, mkParams)
+-- import qualified Hasql.Connection as Connection (acquire, withLibPQConnection)
+-- import qualified Database.PostgreSQL.LibPQ as PQ
 -- import Hasql.Notification (notificationChannel, notificationData, getNotification)
-import Hasql.Notifications (listen, toPgIdentifier, waitForNotifications)
-import qualified Hasql.Session as Session
-import qualified Hasql.Connection as Connection
-import qualified Hasql.TH as TH
+import Hasql.Notifications (listen, unlisten, toPgIdentifier)
 import Hasql.Pool (Pool, use, acquire)
-import Data.Aeson (FromJSON, ToJSON)
+import Data.SirenJSON (Entity, Link, Action, Field)
+-- import Network.URI (URI)
+import Data.Aeson (FromJSON, ToJSON, encode)
 import Data.Valor (Validatable, Validate)
 import Data.Functor.Identity (Identity (..))
-import GHC.Generics (Generic)
+import qualified GHC.Generics as GHC (Generic)
+import qualified Generics.SOP as SOP (Generic)
 import Servant (MimeRender(..), Accept(..), ServerT, Handler, Application
       , Proxy(..), Header, QueryParam, Capture, StreamGet, NewlineFraming
       , JSON, Get, Post, ReqBody, NoContent(..), ServerError(..), err500
       , throwError, serve, hoistServer, (:>), (:<|>)(..)
       )
-import Servant.API.Stream (SourceIO)
+import Servant.API.Stream (SourceIO, toSourceIO)
 import Network.HTTP.Media ((//))
 import Servant.Types.SourceT (fromAction)
 import System.Log.FastLogger (ToLogStr(..), LoggerSet, defaultBufSize, newStdoutLoggerSet, pushLogStrLn)
 
 
-type Api = ReqBody '[JSON] Message :> Post '[JSON] NoContent
-      :<|> Get '[JSON] (Vector Text)
-      :<|> "sse"
-           :> Capture "topic" Text
+type Api = ReqBody '[JSON] MessageInput :> Post '[JSON] Message
+      :<|> Get '[JSON, SirenJSON] (Vector Text)
+      :<|> Capture "topic" Text
            :> QueryParam "since" Text
            :> Header "Last-Event-Id" Text
            :> StreamGet NewlineFraming EventStream (SourceIO ServerEvent)
@@ -51,39 +63,49 @@ instance Accept EventStream where
 instance MimeRender EventStream ServerEvent where
   mimeRender _ = maybe "" toLazyByteString . eventToBuilder
 
-data Message' a = Message {
-    content :: Validatable a [String] Text
-  , topic :: Validatable a [String] Text
-}
+data SirenJSON
+instance Accept SirenJSON where
+    contentType _ = "application" // "vnd.siren+json"
 
-type Message = Message' Identity
-deriving instance Show Message
-deriving instance Generic Message
-deriving instance FromJSON Message
-deriving instance ToJSON Message
+instance MimeRender SirenJSON (Vector Text) where
+    mimeRender _ messages = encode messages
 
-type MessageError = Message' Validate
-deriving instance Show MessageError
+-- data MessageInput' a = MessageInput {
+--     message_id :: Validatable a String (Maybe UUID)
+--   , content :: Validatable a [String] Text
+--   , topic :: Validatable a [String] Text
+-- }
+-- 
+-- type MessageInput = MessageInput' Identity
+-- deriving instance Show MessageInput
+-- deriving instance GHC.Generic MessageInput
+-- deriving instance SOP.Generic MessageInput
+-- deriving instance FromJSON MessageInput
+-- deriving instance ToJSON MessageInput
+-- deriving instance HasParams MessageInput
+
+-- type MessageInputError = MessageInput' Validate
+-- deriving instance Show MessageInputError
+
+
+data MessageInput = MessageInput {
+    content :: Text
+  , topic :: Text
+} deriving (Show, GHC.Generic, SOP.Generic, FromJSON, ToJSON, HasParams)
+
+data Message = Message {
+    message_id :: UUID
+  , content :: Text
+  , topic :: Text
+  , at :: UTCTime
+} deriving (Show, GHC.Generic, SOP.Generic, FromJSON, ToJSON, HasRow)
 
 data Config = Config {
     logger :: LoggerSet
   , pool :: Pool
-  , conn :: Connection.Connection
 }
 
-main :: IO ()
-main = do
-    pool <- acquire (1, 1, "")
-    Right conn <- Connection.acquire ""
-    _ <- use pool $ Session.sql initSchema
-    logger <- newStdoutLoggerSet defaultBufSize
-    runEnv 8888 $ mkApp $ Config logger pool conn
-    where
-        api :: Proxy Api
-        api = Proxy
-        mkApp config = serve api $ hoistServer api (flip runReaderT config) server
-
-initSchema = [TH.uncheckedSql|
+initSchema = [uncheckedSql|
     create table if not exists message (
         message_id uuid primary key default uuid_generate_v4(),
         content text not null,
@@ -105,49 +127,111 @@ initSchema = [TH.uncheckedSql|
     for each row execute function notify_message();
 |]
 
+main :: IO ()
+main = do
+    pool <- acquire (1, 1, "")
+    _ <- use pool $ sql initSchema
+    logger <- newStdoutLoggerSet defaultBufSize
+    runEnv 8888 $ logStdoutDev . mkApp $ Config logger pool
+    where
+        api = Proxy @Api
+        mkApp config = serve api $ hoistServer api (flip runReaderT config) server
+
 type AppM = ReaderT Config Handler
 
 server :: ServerT Api AppM
 server = postMessage :<|> getMessages :<|> sse
     where
-        postMessage :: Message -> AppM NoContent
-        postMessage msg = do
+        postMessage :: MessageInput -> AppM Message
+        postMessage input = do
             pool <- asks pool
-            result <- liftIO $ use pool $ Session.statement (content msg, topic msg) insertMessage
+            result <- liftIO $ use pool $ insertMessage input
+              --   view (field @"content") input
+              -- , view (field @"topic") input)
             case result of
-                Right _ -> pure NoContent
-                Left e -> throwError err500 {errBody = pack $ show e}
+                Right message -> return message
+                Left e -> do
+                    logset <- asks logger
+                    liftIO $ pushLogStrLn logset $ show e
+                    throwError err500
             where
-                insertMessage = [TH.resultlessStatement|insert into message (content, topic) values ($1::text, $2::text)|]
+                insertMessage :: MessageInput -> Session Message
+                insertMessage params = statement params insertMessageStatement
+                -- insertMessageStatement :: Statement (Text, Text) (Text, Text)
+                -- insertMessageStatement = [singletonStatement|
+                --     insert into message
+                --     (content  , topic) values
+                --     ($1::text , $2::text)
+                --     returning content :: text, topic :: text
+                -- |]
+                insertMessageStatement = Statement sql encoder decoder True
+                    where
+                        sql = "insert into message (content, topic) values ($1, $2) returning *"
+                        encoder = mkParams
+                        decoder = singleRow mkRow
 
         getMessages :: AppM (Vector Text)
         getMessages = do
             pool <- asks pool
-            result <- liftIO $ use pool $ Session.statement () selectMessages
+            result <- liftIO $ use pool $ statement () selectMessages
             case result of
                 Right messages -> pure messages
-                Left e -> throwError err500 {errBody = pack $ show e}
+                Left e -> throwError err500 {errBody = show e}
             where
                 selectMessages :: Statement () (Vector (Text))
-                selectMessages = [TH.vectorStatement|select content::text from message|]
+                selectMessages = [vectorStatement|select content::text from message|]
 
         sse :: Text -> Maybe Text -> Maybe Text -> AppM (SourceIO ServerEvent)
         sse topic _since _lastEventId = do
-            logset <- asks logger
-            liftIO $ pushLogStrLn logset $ "sse"
-            conn <- asks conn
-            _ <- liftIO $ listen conn $ toPgIdentifier topic
+            -- pool <- asks pool
+            -- liftIO $ use pool $ sql $ "listen " <> (fromPgIdentifier . toPgIdentifier $ topic)
+
+            -- runResourceT $ do
+            --     (releaseKey, resource) <- allocate (do
+            --             conn <- Connection.acquire ""
+            --             case conn of
+            --                 Right conn' -> do
+            --                     listen conn' $ toPgIdentifier topic
+            --                     return conn')
+            --         (\conn -> unlisten conn $ toPgIdentifier topic)
+            --     release releaseKey
+
+            -- logset <- asks logger
             return $ fromAction (\_ -> False) $ do
-                waitForNotifications notificationHandler conn
+                threadDelay 1_000_000
+                -- liftIO $ pushLogStrLn logset $ "sse"
                 return CloseEvent
-            where
-                notificationHandler channel payload = do
-                    return ServerEvent (Just $ string8 $ show $ "test")
-                                       Nothing
-                                       [string8 $ show $ "test"]
 
 
-            -- _ <- liftIO $ Session.run (Session.sql ("listen test")) conn
+            -- conn <- liftIO $ Connection.acquire ""
+            -- case conn of
+            --     Right conn' -> do
+            --         liftIO $ listen conn' $ toPgIdentifier topic
+            --         return $ fromAction (\_ -> False) $ do
+            --             waitForNotifications conn'
+            --             unlisten conn' $ toPgIdentifier topic
+            --             return CloseEvent
+            --     Left e -> throwError err500 {errBody = pack $ show e}
+            -- where
+            --     waitForNotifications con = Connection.withLibPQConnection con $ void . forever . pqFetch
+            --     pqFetch pqCon = do
+            --       mNotification <- PQ.notifies pqCon
+            --       case mNotification of
+            --         Nothing -> do
+            --           mfd <- PQ.socket pqCon
+            --           case mfd of
+            --             Nothing  -> print "nope"
+            --             Just fd -> do
+            --               void $ threadWaitRead fd
+            --               void $ PQ.consumeInput pqCon
+            --         Just notification ->
+            --             print notification
+                       -- sendNotification (PQ.notifyRelname notification) (PQ.notifyExtra notification)
+                       -- ServerEvent (Just $ string8 $ show $ notificationChannel notification')
+                       --             Nothing
+                       --             [string8 $ show $ notificationData notification']
+
+            -- _ <- liftIO $ run (sql ("listen test")) conn
             -- return $ fromAction (\_ -> False) $ do
             --     notification <- getNotification conn
             --     liftIO $ print notification

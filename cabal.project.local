@@ -11,3 +11,18 @@ program-options
 -- source-repository-package
 --   type: git
 --   location: git://github.com/jfischoff/hasql-notifications
+
+source-repository-package
+  type: git
+  location: git://github.com/docteurklein/siren-json.hs
+  tag: b15de79
+
+source-repository-package
+  type: git
+  location: git://github.com/docteurklein/network-uri-json
+  tag: b7a1610
+
+source-repository-package
+  type: git
+  location: git://github.com/docteurklein/hasql-generic
+  tag: 7c930ab
