@@ -3,13 +3,14 @@ module Main where
 import PostgreSQL.Binary.Data (Vector)
 import Data.ByteString.Builder (toLazyByteString)
 import Data.UUID (UUID, fromString)
+-- import Data.Profunctor (dimap, rmap)
 import Data.Time.Clock (UTCTime)
 -- import Data.UUID.V4 (nextRandom)
 -- import Control.Concurrent.Async (async)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (ReaderT, asks, runReaderT)
-import Control.Monad.Trans.Resource (ResourceT, runResourceT, allocate, release)
-import Control.Monad (void, forever)
+-- import Control.Monad.Trans.Resource (ResourceT, runResourceT, allocate, release)
+-- import Control.Monad (void, forever)
 import Control.Concurrent (threadWaitRead, threadDelay)
 -- import Optics.Getter (view)
 -- import Data.Generics.Product.Fields (field)
@@ -42,7 +43,7 @@ import Servant (MimeRender(..), Accept(..), ServerT, Handler, Application
       , JSON, Get, Post, ReqBody, NoContent(..), ServerError(..), err500
       , throwError, serve, hoistServer, (:>), (:<|>)(..)
       )
-import Servant.API.Stream (SourceIO, toSourceIO)
+import Servant.API.Stream (SourceIO)
 import Network.HTTP.Media ((//))
 import Servant.Types.SourceT (fromAction)
 import System.Log.FastLogger (ToLogStr(..), LoggerSet, defaultBufSize, newStdoutLoggerSet, pushLogStrLn)
@@ -132,6 +133,7 @@ main = do
     pool <- acquire (1, 1, "")
     _ <- use pool $ sql initSchema
     logger <- newStdoutLoggerSet defaultBufSize
+    pushLogStrLn logger $ "listening on port 8888"
     runEnv 8888 $ logStdoutDev . mkApp $ Config logger pool
     where
         api = Proxy @Api
@@ -174,10 +176,14 @@ server = postMessage :<|> getMessages :<|> sse
             result <- liftIO $ use pool $ statement () selectMessages
             case result of
                 Right messages -> pure messages
-                Left e -> throwError err500 {errBody = show e}
+                Left e -> do
+                    logset <- asks logger
+                    liftIO $ pushLogStrLn logset $ show e
+                    throwError err500
             where
                 selectMessages :: Statement () (Vector (Message))
-                -- selectMessages = [vectorStatement|select content::text from message|]
+                -- selectMessages = rmap Message [vectorStatement|select message_id::text, content::text, topic::text, at::timestamptz from message|]
+                -- dimap emailToText (fmap UserId) statement :: Statement Email (Maybe UserId)
                 selectMessages = Statement sql encoder decoder True
                     where
                         sql = "select * from message"
