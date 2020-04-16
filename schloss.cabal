@@ -47,8 +47,8 @@ executable schloss
                , relude
                , uuid
                , time
-               , optics-core
-               , generic-optics
+               -- , optics-core
+               -- , generic-optics
                , bytestring
                , text
                , aeson

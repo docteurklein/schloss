@@ -11,8 +11,8 @@ import Control.Monad.Reader (ReaderT, asks, runReaderT)
 import Control.Monad.Trans.Resource (ResourceT, runResourceT, allocate, release)
 import Control.Monad (void, forever)
 import Control.Concurrent (threadWaitRead, threadDelay)
-import Optics.Getter (view)
-import Data.Generics.Product.Fields (field)
+-- import Optics.Getter (view)
+-- import Data.Generics.Product.Fields (field)
 
 import Network.Wai.Handler.Warp (runEnv)
 import Network.Wai.EventSource (ServerEvent(..))
@@ -20,8 +20,8 @@ import Network.Wai.EventSource.EventStream (eventToBuilder)
 import Network.Wai.Middleware.RequestLogger (logStdoutDev)
 import Hasql.Session (sql, statement, run, Session(..))
 import Hasql.Statement (Statement(..))
--- import Hasql.Encoders (text)
-import Hasql.Decoders (singleRow)
+import Hasql.Encoders (noParams)
+import Hasql.Decoders (singleRow, rowVector)
 import Hasql.TH (uncheckedSql, singletonStatement, vectorStatement)
 import Hasql.Generic.HasRow (HasRow, mkRow)
 import Hasql.Generic.HasParams (HasParams, mkParams)
@@ -49,7 +49,7 @@ import System.Log.FastLogger (ToLogStr(..), LoggerSet, defaultBufSize, newStdout
 
 
 type Api = ReqBody '[JSON] MessageInput :> Post '[JSON] Message
-      :<|> Get '[JSON, SirenJSON] (Vector Text)
+      :<|> Get '[JSON, SirenJSON] (Vector Message)
       :<|> Capture "topic" Text
            :> QueryParam "since" Text
            :> Header "Last-Event-Id" Text
@@ -67,8 +67,8 @@ data SirenJSON
 instance Accept SirenJSON where
     contentType _ = "application" // "vnd.siren+json"
 
-instance MimeRender SirenJSON (Vector Text) where
-    mimeRender _ messages = encode messages
+instance (ToJSON a) => MimeRender SirenJSON a where
+    mimeRender _ = encode
 
 -- data MessageInput' a = MessageInput {
 --     message_id :: Validatable a String (Maybe UUID)
@@ -145,7 +145,7 @@ server = postMessage :<|> getMessages :<|> sse
         postMessage :: MessageInput -> AppM Message
         postMessage input = do
             pool <- asks pool
-            result <- liftIO $ use pool $ insertMessage input
+            result <- liftIO $ use pool $ statement input insertMessage
               --   view (field @"content") input
               -- , view (field @"topic") input)
             case result of
@@ -155,22 +155,20 @@ server = postMessage :<|> getMessages :<|> sse
                     liftIO $ pushLogStrLn logset $ show e
                     throwError err500
             where
-                insertMessage :: MessageInput -> Session Message
-                insertMessage params = statement params insertMessageStatement
-                -- insertMessageStatement :: Statement (Text, Text) (Text, Text)
-                -- insertMessageStatement = [singletonStatement|
+                -- insertMessage :: Statement (Text, Text) (Text, Text)
+                -- insertMessage = [singletonStatement|
                 --     insert into message
                 --     (content  , topic) values
                 --     ($1::text , $2::text)
                 --     returning content :: text, topic :: text
                 -- |]
-                insertMessageStatement = Statement sql encoder decoder True
+                insertMessage = Statement sql encoder decoder True
                     where
                         sql = "insert into message (content, topic) values ($1, $2) returning *"
                         encoder = mkParams
                         decoder = singleRow mkRow
 
-        getMessages :: AppM (Vector Text)
+        getMessages :: AppM (Vector Message)
         getMessages = do
             pool <- asks pool
             result <- liftIO $ use pool $ statement () selectMessages
@@ -178,8 +176,13 @@ server = postMessage :<|> getMessages :<|> sse
                 Right messages -> pure messages
                 Left e -> throwError err500 {errBody = show e}
             where
-                selectMessages :: Statement () (Vector (Text))
-                selectMessages = [vectorStatement|select content::text from message|]
+                selectMessages :: Statement () (Vector (Message))
+                -- selectMessages = [vectorStatement|select content::text from message|]
+                selectMessages = Statement sql encoder decoder True
+                    where
+                        sql = "select * from message"
+                        encoder = noParams
+                        decoder = rowVector mkRow
 
         sse :: Text -> Maybe Text -> Maybe Text -> AppM (SourceIO ServerEvent)
         sse topic _since _lastEventId = do
