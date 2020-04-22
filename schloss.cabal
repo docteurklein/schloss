@@ -12,8 +12,13 @@ executable schloss
   default-extensions: OverloadedStrings
                     , ApplicativeDo
                     , TypeFamilies
+                    , TypeFamilyDependencies
                     , NumericUnderscores
+                    , DeriveDataTypeable
+                    , DeriveFoldable
+                    , DeriveFunctor
                     , DeriveGeneric
+                    , DeriveTraversable
                     , DerivingVia
                     , DeriveAnyClass
                     , StandaloneDeriving
@@ -23,17 +28,27 @@ executable schloss
                     , NamedFieldPuns
                     , TypeApplications
                     , DataKinds
+                    -- , PolyKinds
                     , TypeOperators
                     , QuasiQuotes
                     , LambdaCase
                     , BlockArguments
-                    , FlexibleContexts
                     , ScopedTypeVariables
+                    , FlexibleContexts
                     , FlexibleInstances
+                    , InstanceSigs
+                    , DefaultSignatures
                     , MultiParamTypeClasses
                     , PartialTypeSignatures
                     , TypeSynonymInstances
+                    -- , LiberalTypeSynonyms
+                    , EmptyCase
+                    , GADTs
+                    , ParallelListComp
+                    , TransformListComp
+                    , AllowAmbiguousTypes
                     , NoMonomorphismRestriction
+                    , UndecidableInstances
 
   -- ghc-options: -Wall -fwarn-missing-signatures
 
@@ -72,5 +87,6 @@ executable schloss
                , hasql-notifications
                , valor
                , siren-json
-               , resourcet
-               , profunctors
+               -- , resourcet
+               -- , profunctors
+               , vector
