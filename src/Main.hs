@@ -21,7 +21,7 @@ import Network.Wai.EventSource.EventStream (eventToBuilder)
 import Network.Wai.Middleware.RequestLogger (logStdoutDev)
 import Hasql.Session (sql, statement, run, Session(..))
 import Hasql.Statement (Statement(..))
-import Hasql.Encoders (noParams)
+import Hasql.Encoders (noParams, array)
 import Hasql.Decoders (singleRow, rowVector)
 import Hasql.TH (singletonStatement, vectorStatement)
 import Hasql.Generic.HasRow (HasRow, mkRow)
@@ -48,7 +48,7 @@ import Servant.Types.SourceT (fromAction)
 import System.Log.FastLogger (ToLogStr(..), LoggerSet, defaultBufSize, newStdoutLoggerSet, pushLogStrLn)
 
 
-type Api = ReqBody '[JSON] (MessageInput Value) :> Post '[JSON] (Message Value)
+type Api = ReqBody '[JSON] (MessageInput Value) :> Post '[JSON] (Vector (Message Value))
       :<|> Get '[JSON, SirenJSON] (Vector (Message Value))
       :<|> Capture "topic" Text
            :> QueryParam "since" Text
@@ -70,35 +70,37 @@ instance Accept SirenJSON where
 instance (ToJSON a) => MimeRender SirenJSON a where
     mimeRender _ = encode
 
-data MessageInput' a content = MessageInput' {
-    message_id :: Validatable a String (Maybe UUID)
-  , content :: Validatable a [String] content
-  , topic :: Validatable a [String] Text
-} -- deriving stock    (Show, GHC.Generic)
-  -- deriving anyclass (SOP.Generic, FromJSON, ToJSON, HasParams)
+-- data MessageInput' a payload = MessageInput' {
+--     message_id :: Validatable a String (Maybe UUID)
+--   , payload :: Validatable a [String] payload
+--   , topic :: Validatable a [String] Text
+-- } -- deriving stock    (Show, GHC.Generic)
+--   -- deriving anyclass (SOP.Generic, FromJSON, ToJSON, HasParams)
+-- 
+-- type MessageInput = MessageInput' Identity
+-- deriving instance Show (MessageInput Value)
+-- deriving via (MessageInput Value) instance FromJSON (MessageInput Value)
+-- deriving via (MessageInput Value) instance ToJSON (MessageInput Value)
+-- deriving via (MessageInput Value) instance HasParams (MessageInput Value)
+-- 
+-- type MessageInputError = MessageInput' Validate
+-- deriving instance Show (MessageInputError Value)
+-- deriving via (MessageInputError Value) instance ToJSON (MessageInputError Value)
 
-type MessageInput = MessageInput' Identity
-deriving instance Show (MessageInput Value)
-deriving via (MessageInput Value) instance FromJSON (MessageInput Value)
-deriving via (MessageInput Value) instance ToJSON (MessageInput Value)
-deriving via (MessageInput Value) instance HasParams (MessageInput Value)
 
-type MessageInputError = MessageInput' Validate
-deriving instance Show (MessageInputError Value)
-deriving via (MessageInputError Value) instance ToJSON (MessageInputError Value)
-
-
--- data MessageInput a = MessageInput {
---     content :: a
---   , topic :: Text
--- } deriving stock    (Show, GHC.Generic)
---   deriving anyclass (SOP.Generic, FromJSON, ToJSON, HasParams)
+data MessageInput a = MessageInput {
+    name :: Text
+  , payload :: a
+  , topic :: Text
+} deriving stock    (Show, GHC.Generic)
+  deriving anyclass (SOP.Generic, FromJSON, ToJSON, HasParams)
 
 data Message a = Message {
     message_id :: UUID
-  , content :: a
+  , name :: Text
+  , payload :: a
   , topic :: Text
-  , at :: UTCTime
+  , added_at :: UTCTime
 } deriving stock    (Show, GHC.Generic)
   deriving anyclass (SOP.Generic, FromJSON, ToJSON, HasRow)
 
@@ -120,28 +122,26 @@ main = do
 type AppM = ReaderT Config Handler
 
 server :: ServerT Api AppM
-server = postMessage :<|> getMessages :<|> sse
+server = postMessages :<|> getMessages :<|> sse
     where
-        postMessage :: MessageInput Value -> AppM (Message Value)
-        postMessage input = do
-            -- show $ view (field @"content") input
+        postMessages :: (MessageInput Value) -> AppM (Vector (Message Value))
+        postMessages messages = do
+            -- show $ view (field @"payload") messages
             pool <- asks pool
-            result <- liftIO $ use pool $ statement input insertMessage
-              --   view (field @"content") input
-              -- , view (field @"topic") input)
+            result <- liftIO $ use pool $ statement messages insertMessages
             case result of
-                Right message -> return message
+                Right messages -> return messages
                 Left e -> do
                     logset <- asks logger
                     liftIO $ pushLogStrLn logset $ show e
                     throwError err500
             where
-                insertMessage :: Statement (MessageInput Value) (Message Value)
-                insertMessage = Statement sql encoder decoder True
+                insertMessages :: Statement (MessageInput Value) (Vector (Message Value))
+                insertMessages = Statement sql encoder decoder True
                     where
-                        sql = "insert into schloss.messages (payload, topic) values ($1, $2) returning *"
+                        sql = "insert into schloss.messages (name, payload, topic) values ($1, $2, $3) returning message_id, name, payload, topic, added_at"
                         encoder = mkParams
-                        decoder = singleRow mkRow
+                        decoder = rowVector mkRow
 
         getMessages :: AppM (Vector (Message Value))
         getMessages = do
@@ -157,7 +157,7 @@ server = postMessage :<|> getMessages :<|> sse
                 selectMessages :: Statement () (Vector (Message Value))
                 selectMessages = Statement sql encoder decoder True
                     where
-                        sql = "select * from schloss.messages"
+                        sql = "select message_id, name, payload, topic, added_at from schloss.messages"
                         encoder = noParams
                         decoder = rowVector mkRow
         sse :: Text -> Maybe Text -> Maybe Text -> AppM (SourceIO ServerEvent)
