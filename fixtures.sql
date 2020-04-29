@@ -1,5 +1,3 @@
-truncate schloss.messages;
-
 insert into schloss.messages
 (name, payload, topic) select
 'user_registered' , json_build_object('name' , 'joe-' || i)  , 'users'

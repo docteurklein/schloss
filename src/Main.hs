@@ -117,7 +117,7 @@ main = do
     runEnv 8888 $ logStdoutDev . mkApp $ Config logger pool
     where
         api = Proxy @Api
-        mkApp config = serve api $ hoistServer api (flip runReaderT config) server
+        mkApp config = serve api $ hoistServer api (`runReaderT` config) server
 
 type AppM = ReaderT Config Handler
 
