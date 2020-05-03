@@ -62,8 +62,8 @@ executable schloss
                , relude
                , uuid
                , time
-               -- , optics-core
-               -- , generic-optics
+               , optics-core
+               , generic-optics
                , bytestring
                , text
                , aeson
@@ -74,19 +74,24 @@ executable schloss
                , wai-extra
                , http-types
                , http-media
+               , postgresql-binary
                , hasql
                , hasql-th
-               , hasql-generic
-               , generics-sop
                , hasql-pool
-               , postgresql-binary
+               , resource-pool
+               , hasql-transaction
+               , hasql-queue
+               , hasql-notifications
+               , hasql-generic
                -- , postgresql-libpq
+               , generics-sop
                , transformers
                , fast-logger
                , mtl
-               , hasql-notifications
                , valor
                , siren-json
                -- , resourcet
                -- , profunctors
                , vector
+               , async
+               , req
