@@ -1,61 +1,61 @@
 module Main where
 
-import Data.Vector (Vector)
-import Data.ByteString.Builder (toLazyByteString)
-import Data.UUID (UUID)
-import Data.Text as Text (null)
+
+
+-- import Control.Monad.Trans.Resource (ResourceT, runResourceT, allocate, release)
+-- import Data.Pool (withResource)
 -- import Data.Profunctor (dimap, rmap)
-import Data.Time.Clock (UTCTime)
 -- import Data.UUID.V4 (nextRandom)
+-- import Hasql.Connection (acquire, release, Connection)
+-- import Hasql.Notification (notificationChannel, notificationData, getNotification)
+-- import Hasql.Notifications (listen, unlisten, toPgIdentifier)
+-- import Network.URI (URI)
+-- import qualified Database.PostgreSQL.LibPQ as PQ
+import Control.Concurrent (threadWaitRead, threadDelay)
 import Control.Concurrent.Async (async)
+import Control.Monad (void, forever)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (ReaderT, asks, runReaderT)
 import Control.Monad.Trans.Except (ExceptT, throwE)
--- import Control.Monad.Trans.Resource (ResourceT, runResourceT, allocate, release)
-import Control.Monad (void, forever)
-import Control.Concurrent (threadWaitRead, threadDelay)
-import Optics.Getter (view)
+import Control.Lens (Lens)
+import Data.Aeson (FromJSON, ToJSON, encode, Value)
+import Data.ByteString.Builder (toLazyByteString)
+import Data.Functor.Identity (Identity (..))
 import Data.Generics.Product.Fields (field)
-
-import Network.Wai.Handler.Warp (runEnv)
-import Network.Wai.EventSource (ServerEvent(..))
-import Network.Wai.EventSource.EventStream (eventToBuilder)
-import Network.Wai.Middleware.RequestLogger (logStdoutDev)
-import Hasql.Session (sql, statement, run, Session(..))
-import qualified Hasql.Transaction as Transactional (statement)
-import Hasql.Transaction.Sessions (transaction, IsolationLevel(Serializable), Mode(Write))
-import Hasql.Statement (Statement(..))
-import Hasql.Queue.Session (enqueueNotify)
+import Data.SirenJSON (Entity, Link, Action, Field)
+import Data.Text as Text (null)
+import Data.Time.Clock (UTCTime)
+import Data.UUID (UUID)
+import Data.Valor (Validatable, Validate, Validator, check, skip)
+import Data.Vector (Vector)
+import HKD.Lens (makeLensesOf, LensesOf, getLensOf)
+import Generics.OneLiner (Constraints)
+import Hasql.Generic.HasParams (HasParams, mkParams)
+import Hasql.Generic.HasRow (HasRow, mkRow)
+import Hasql.Pool (Pool, use, acquire, withConnection)
 import Hasql.Queue.IO (withDequeue)
 import Hasql.Queue.Migrate (migrationQueryString)
-import qualified Hasql.Encoders as Encode (noParams, array, text, jsonb, element)
-import qualified Hasql.Decoders as Decode (singleRow, rowVector, noResult, jsonb)
+import Hasql.Queue.Session (enqueueNotify)
+import Hasql.Session (sql, statement, run, Session(..))
+import Hasql.Statement (Statement(..))
 import Hasql.TH (singletonStatement, vectorStatement)
-import Hasql.Generic.HasRow (HasRow, mkRow)
-import Hasql.Generic.HasParams (HasParams, mkParams)
--- import Hasql.Connection (acquire, release, Connection)
--- import qualified Database.PostgreSQL.LibPQ as PQ
--- import Hasql.Notification (notificationChannel, notificationData, getNotification)
--- import Hasql.Notifications (listen, unlisten, toPgIdentifier)
-import Hasql.Pool (Pool, use, acquire, withConnection)
--- import Data.Pool (withResource)
-import Data.SirenJSON (Entity, Link, Action, Field)
--- import Network.URI (URI)
-import Data.Aeson (FromJSON, ToJSON, encode, Value)
-import Data.Valor (Validatable, Validate, Validator, check, skip)
-import Data.Functor.Identity (Identity (..))
-import qualified GHC.Generics as GHC (Generic)
-import qualified Generics.SOP as SOP (Generic)
-import Servant (MimeRender(..), Accept(..), ServerT, Handler, Application
-      , Proxy(..), Header, QueryParam, Capture, StreamGet, NewlineFraming
-      , JSON, Get, Post, ReqBody, NoContent(..), ServerError(..), err500
-      , throwError, serve, hoistServer, (:>), (:<|>)(..))
-import Servant.API.Stream (SourceIO)
+import Hasql.Transaction.Sessions (transaction, IsolationLevel(Serializable), Mode(Write))
 import Network.HTTP.Media ((//))
+import Network.HTTP.Req (req, runReq, defaultHttpConfig, POST(..), https,  (/:), ReqBodyJson(..), ignoreResponse, responseStatusCode)
+import Network.Wai.EventSource (ServerEvent(..))
+import Network.Wai.EventSource.EventStream (eventToBuilder)
+import Network.Wai.Handler.Warp (runEnv)
+import Network.Wai.Middleware.RequestLogger (logStdoutDev)
+import Optics.Getter (view)
+import Servant (MimeRender(..), Accept(..), ServerT, Handler, Application, Proxy(..), Header, QueryParam, Capture, StreamGet, NewlineFraming, JSON, Get, Post, ReqBody, NoContent(..), ServerError(..), err500, throwError, serve, hoistServer, (:>), (:<|>)(..))
+import Servant.API.Stream (SourceIO)
 import Servant.Types.SourceT (fromAction)
 import System.Log.FastLogger (ToLogStr(..), LoggerSet, defaultBufSize, newStdoutLoggerSet, pushLogStrLn)
-import Network.HTTP.Req (req, runReq, defaultHttpConfig, POST(..), https,  (/:), ReqBodyJson(..), ignoreResponse, responseStatusCode)
-
+import qualified GHC.Generics as GHC (Generic)
+import qualified Generics.SOP as SOP (Generic)
+import qualified Hasql.Decoders as Decode (singleRow, rowVector, noResult, jsonb)
+import qualified Hasql.Encoders as Encode (noParams, array, text, jsonb, element)
+import qualified Hasql.Transaction as Transactional (statement)
 
 type Api = ReqBody '[JSON] MessageInput :> Post '[JSON] Message
       :<|> Get '[JSON, SirenJSON] (Vector Message)
@@ -91,6 +91,13 @@ instance (ToJSON a) => MimeRender SirenJSON a where
 -- deriving via MessageInput instance FromJSON MessageInput
 -- deriving via MessageInput instance ToJSON MessageInput
 -- deriving via MessageInput instance HasParams MessageInput
+-- deriving instance (Constraints (MessageInput' f) HasParams) => HasParams (MessageInput' f)
+
+-- lensesForMessageInput :: LensesOf MessageInput MessageInput 0
+-- lensesForMessageInput = makeLensesOf
+-- 
+-- topicLens :: Lens MessageInput MessageInput Text Text
+-- topicLens = getLensOf $ topic lensesForMessageInput
 -- 
 -- nonempty' :: Monad m => Text -> ExceptT Text m Text
 -- nonempty' t = if Text.null t
@@ -133,16 +140,14 @@ main = do
     pool <- acquire (100, 1, "")
     logger <- newStdoutLoggerSet defaultBufSize
 
-    use pool $ do
-        sql $ fromString $ migrationQueryString "jsonb"
+    use pool $ sql $ fromString $ migrationQueryString "jsonb"
 
-    async . forever $ do
-        withConnection pool \conn -> do
-            case conn of
-                Right conn' -> withDequeue "queue_channel" conn' Decode.jsonb 10 10 publish
-                Left e -> error $ show e
+    async . forever $ withConnection pool \conn -> do
+        case conn of
+            Right conn' -> withDequeue "queue_channel" conn' Decode.jsonb 10 10 publish
+            Left e -> error $ show e
 
-    pushLogStrLn logger $ "listening on port 8888"
+    pushLogStrLn logger "listening on port 8888"
     runEnv 8888 $ logStdoutDev . mkApp $ Config logger pool
     where
         api = Proxy @Api

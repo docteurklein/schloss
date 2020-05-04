@@ -9,45 +9,47 @@ cabal-version:       >=2.0
 
 executable schloss
   default-language: Haskell2010
-  default-extensions: OverloadedStrings
+  default-extensions: AllowAmbiguousTypes
                     , ApplicativeDo
-                    , TypeFamilies
-                    , TypeFamilyDependencies
-                    , NumericUnderscores
+                    , BlockArguments
+                    , DataKinds
+                    , DefaultSignatures
+                    , DeriveAnyClass
                     , DeriveDataTypeable
                     , DeriveFoldable
                     , DeriveFunctor
                     , DeriveGeneric
                     , DeriveTraversable
-                    , DerivingVia
-                    , DeriveAnyClass
-                    , StandaloneDeriving
-                    , GeneralizedNewtypeDeriving
                     , DerivingStrategies
+                    , DerivingVia
+                    , DisambiguateRecordFields
                     , DuplicateRecordFields
-                    , NamedFieldPuns
-                    , TypeApplications
-                    , DataKinds
-                    -- , PolyKinds
-                    , TypeOperators
-                    , QuasiQuotes
-                    , LambdaCase
-                    , BlockArguments
-                    , ScopedTypeVariables
+                    , EmptyCase
                     , FlexibleContexts
                     , FlexibleInstances
-                    , InstanceSigs
-                    , DefaultSignatures
-                    , MultiParamTypeClasses
-                    , PartialTypeSignatures
-                    , TypeSynonymInstances
-                    -- , LiberalTypeSynonyms
-                    , EmptyCase
                     , GADTs
-                    , ParallelListComp
-                    , TransformListComp
-                    , AllowAmbiguousTypes
+                    , GeneralizedNewtypeDeriving
+                    , InstanceSigs
+                    , KindSignatures
+                    , LambdaCase
+                    , LiberalTypeSynonyms
+                    , MultiParamTypeClasses
+                    , NamedFieldPuns
                     , NoMonomorphismRestriction
+                    , NumericUnderscores
+                    , OverloadedStrings
+                    , ParallelListComp
+                    , PartialTypeSignatures
+                    , PolyKinds
+                    , QuasiQuotes
+                    , ScopedTypeVariables
+                    , StandaloneDeriving
+                    , TransformListComp
+                    , TypeApplications
+                    , TypeFamilies
+                    , TypeFamilyDependencies
+                    , TypeOperators
+                    , TypeSynonymInstances
                     , UndecidableInstances
 
   -- ghc-options: -Wall -fwarn-missing-signatures
@@ -59,39 +61,42 @@ executable schloss
         , relude (Relude as Prelude)
 
   build-depends: base
-               , relude
-               , uuid
-               , time
-               , optics-core
-               , generic-optics
-               , bytestring
-               , text
                , aeson
+               , async
+               , bytestring
+               , fast-logger
+               , generic-optics
+               , generics-sop
+               , hasql
+               , hasql-generic
+               , hasql-notifications
+               , hasql-pool
+               , hasql-queue
+               , hasql-th
+               , hasql-transaction
+               , hkd-lens
+               , http-media
+               , http-types
+               , mtl
+               , lens
+               , one-liner
+               , optics-core
+               , postgresql-binary
+               , relude
+               , req
+               , resource-pool
                , servant
                , servant-server
-               , warp
+               , siren-json
+               , text
+               , time
+               , transformers
+               , uuid
+               , valor
+               , vector
                , wai
                , wai-extra
-               , http-types
-               , http-media
-               , postgresql-binary
-               , hasql
-               , hasql-th
-               , hasql-pool
-               , resource-pool
-               , hasql-transaction
-               , hasql-queue
-               , hasql-notifications
-               , hasql-generic
+               , warp
                -- , postgresql-libpq
-               , generics-sop
-               , transformers
-               , fast-logger
-               , mtl
-               , valor
-               , siren-json
-               -- , resourcet
                -- , profunctors
-               , vector
-               , async
-               , req
+               -- , resourcet
