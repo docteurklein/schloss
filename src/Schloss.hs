@@ -1,4 +1,6 @@
-module Main where
+module Schloss(
+    main
+) where
 
 import Hasql.Notifications (listen, unlisten, toPgIdentifier, waitForNotifications)
 -- import Network.URI (URI)

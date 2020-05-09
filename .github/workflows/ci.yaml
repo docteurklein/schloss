@@ -47,4 +47,4 @@ jobs:
 
     - name: Test
       run: |
-        cabal test all --enable-tests
+        cabal test

@@ -1,3 +1,4 @@
+tests: True
 library-vanilla: False
 shared: True
 executable-dynamic: True
