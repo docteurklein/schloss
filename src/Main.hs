@@ -1,25 +1,16 @@
 module Main where
 
-
-
--- import Control.Monad.Trans.Resource (ResourceT, runResourceT, allocate, release)
--- import Data.Pool (withResource)
--- import Data.Profunctor (dimap, rmap)
--- import Data.UUID.V4 (nextRandom)
--- import Hasql.Connection (acquire, release, Connection)
--- import Hasql.Notification (notificationChannel, notificationData, getNotification)
--- import Hasql.Notifications (listen, unlisten, toPgIdentifier)
+import Hasql.Notifications (listen, unlisten, toPgIdentifier, waitForNotifications)
 -- import Network.URI (URI)
--- import qualified Database.PostgreSQL.LibPQ as PQ
 import Control.Concurrent (threadWaitRead, threadDelay)
 import Control.Concurrent.Async (async)
 import Control.Monad (void, forever)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (ReaderT, asks, runReaderT)
-import Control.Monad.Trans.Except (ExceptT, throwE)
+-- import Control.Monad.Trans.Except (ExceptT, throwE)
 import Control.Lens (Lens)
 import Data.Aeson (FromJSON, ToJSON, encode, Value)
-import Data.ByteString.Builder (toLazyByteString)
+import Data.ByteString.Builder (toLazyByteString, string8)
 import Data.Functor.Identity (Identity (..))
 import Data.Generics.Product.Fields (field)
 import Data.SirenJSON (Entity, Link, Action, Field)
@@ -28,96 +19,70 @@ import Data.Time.Clock (UTCTime)
 import Data.UUID (UUID)
 import Data.Valor (Validatable, Validate, Validator, check, skip)
 import Data.Vector (Vector)
-import HKD.Lens (makeLensesOf, LensesOf, getLensOf)
-import Generics.OneLiner (Constraints)
+-- import qualified Data.Singletons.TH as TH (genSingletons, singDecideInstances)
+-- import Exinst (Dict(Dict), Dict1(dict1))
+-- import HKD.Lens (makeLensesOf, LensesOf, getLensOf)
+-- import Generics.OneLiner (Constraints)
+import qualified Database.PostgreSQL.LibPQ as PQ
+import Hasql.Connection (withLibPQConnection)
 import Hasql.Generic.HasParams (HasParams, mkParams)
 import Hasql.Generic.HasRow (HasRow, mkRow)
 import Hasql.Pool (Pool, use, acquire, withConnection)
-import Hasql.Queue.IO (withDequeue)
-import Hasql.Queue.Migrate (migrationQueryString)
-import Hasql.Queue.Session (enqueueNotify)
-import Hasql.Session (sql, statement, run, Session(..))
+-- import Hasql.Queue.IO (withDequeue)
+-- import Hasql.Queue.Migrate (migrationQueryString)
+-- import Hasql.Queue.Session (enqueueNotify)
+import Hasql.Session (sql, statement, Session(..))
 import Hasql.Statement (Statement(..))
 import Hasql.TH (singletonStatement, vectorStatement)
 import Hasql.Transaction.Sessions (transaction, IsolationLevel(Serializable), Mode(Write))
+import Network.HTTP.Client (newManager, defaultManagerSettings)
+import Network.HTTP.Simple (defaultRequest, httpNoBody, httpLBS, httpJSON, setRequestPath, setRequestHost, setRequestPort, setRequestSecure)
+import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Media ((//))
-import Network.HTTP.Req (req, runReq, defaultHttpConfig, POST(..), https,  (/:), ReqBodyJson(..), ignoreResponse, responseStatusCode)
+-- import Network.HTTP.Req (req, runReq, defaultHttpConfig, POST(..), https,  (/:), ReqBodyJson(..), ignoreResponse, responseStatusCode)
 import Network.Wai.EventSource (ServerEvent(..))
 import Network.Wai.EventSource.EventStream (eventToBuilder)
-import Network.Wai.Handler.Warp (runEnv)
+import Network.Wai.Handler.Warp (run)
 import Network.Wai.Middleware.RequestLogger (logStdoutDev)
 import Optics.Getter (view)
-import Servant (MimeRender(..), Accept(..), ServerT, Handler, Application, Proxy(..), Header, QueryParam, Capture, StreamGet, NewlineFraming, JSON, Get, Post, ReqBody, NoContent(..), ServerError(..), err500, throwError, serve, hoistServer, (:>), (:<|>)(..))
+import Servant (Proxy(..), Application, throwError)
+import Servant.API (MimeRender(..), MimeUnrender(..), Accept(..), Header, QueryParam, Capture, StreamGet, NewlineFraming, JSON, Get, Post, ReqBody, NoContent(..), (:>), (:<|>)(..))
 import Servant.API.Stream (SourceIO)
-import Servant.Types.SourceT (fromAction)
+import Servant.Client.Core (BaseUrl(..), Scheme(..))
+import Servant.Client.Streaming (client, ClientM, withClientM, mkClientEnv)
+import Servant.Server (serve, err500, ServerError(..), Handler, hoistServer, ServerT)
+import Servant.Types.SourceT (fromAction, foreach)
+import System.ReadEnvVar (readEnvDef)
 import System.Log.FastLogger (ToLogStr(..), LoggerSet, defaultBufSize, newStdoutLoggerSet, pushLogStrLn)
+import qualified GHC.Show
 import qualified GHC.Generics as GHC (Generic)
 import qualified Generics.SOP as SOP (Generic)
 import qualified Hasql.Decoders as Decode (singleRow, rowVector, noResult, jsonb)
 import qualified Hasql.Encoders as Encode (noParams, array, text, jsonb, element)
 import qualified Hasql.Transaction as Transactional (statement)
 
-type Api = ReqBody '[JSON] MessageInput :> Post '[JSON] Message
-      :<|> Get '[JSON, SirenJSON] (Vector Message)
-      :<|> Capture "topic" Text
-           :> QueryParam "since" Text
-           :> Header "Last-Event-Id" Text
-           :> StreamGet NewlineFraming EventStream (SourceIO ServerEvent)
+newtype FirstName = FirstName Text
+    deriving stock    (Show, GHC.Generic)
+    deriving anyclass (SOP.Generic, FromJSON, ToJSON, HasParams)
 
-data EventStream
+newtype LastName = LastName Text
+    deriving stock    (Show, GHC.Generic)
+    deriving anyclass (SOP.Generic, FromJSON, ToJSON, HasParams)
 
-instance Accept EventStream where
-    contentType _ = "text" // "event-stream"
+newtype UserId = UserId UUID
+    deriving stock    (Show, GHC.Generic)
+    deriving anyclass (SOP.Generic, FromJSON, ToJSON, HasParams)
 
-instance MimeRender EventStream ServerEvent where
-  mimeRender _ = maybe "" toLazyByteString . eventToBuilder
+data Event
+    = UserAdded UserId LastName FirstName
+    | UserBanned UserId
+    deriving stock    (Show, GHC.Generic)
+    deriving anyclass (SOP.Generic, FromJSON, ToJSON)
 
-data SirenJSON
-instance Accept SirenJSON where
-    contentType _ = "application" // "vnd.siren+json"
-
-instance (ToJSON a) => MimeRender SirenJSON a where
-    mimeRender _ = encode
-
--- data MessageInput' a = MessageInput {
---     message_id :: Validatable a Text (Maybe UUID)
---   , payload :: Validatable a Text Value
---   , topic :: Validatable a Text Text
--- } -- deriving stock    (Show, GHC.Generic)
---   -- deriving anyclass (SOP.Generic, FromJSON, ToJSON, HasParams)
--- 
--- type MessageInput = MessageInput' Identity
--- deriving instance Show MessageInput
--- deriving via MessageInput instance FromJSON MessageInput
--- deriving via MessageInput instance ToJSON MessageInput
--- deriving via MessageInput instance HasParams MessageInput
--- deriving instance (Constraints (MessageInput' f) HasParams) => HasParams (MessageInput' f)
-
--- lensesForMessageInput :: LensesOf MessageInput MessageInput 0
--- lensesForMessageInput = makeLensesOf
--- 
--- topicLens :: Lens MessageInput MessageInput Text Text
--- topicLens = getLensOf $ topic lensesForMessageInput
--- 
--- nonempty' :: Monad m => Text -> ExceptT Text m Text
--- nonempty' t = if Text.null t
---   then throwE "can't be empty"
---   else pure t
--- 
--- messageInputValidator :: Monad m => Validator MessageInput m MessageInputError
--- messageInputValidator = MessageInput
---   <$> skip
---   <*> skip
---   <*> check topic nonempty'
--- 
--- type MessageInputError = MessageInput' Validate
--- deriving instance Show MessageInputError
--- deriving via MessageInputError instance ToJSON MessageInputError
-
-data MessageInput = MessageInput {
+data MessageInput a = MessageInput {
     name :: Text
-  , payload :: Value
   , topic :: Text
+  , payload :: Value
 } deriving stock    (Show, GHC.Generic)
   deriving anyclass (SOP.Generic, FromJSON, ToJSON, HasParams)
 
@@ -130,6 +95,39 @@ data Message = Message {
 } deriving stock    (Show, GHC.Generic)
   deriving anyclass (SOP.Generic, FromJSON, ToJSON, HasRow)
 
+
+type Api
+    = ReqBody '[JSON] (MessageInput Event) :> Post '[JSON] Message
+ :<|> Get '[JSON, SirenJSON] (Vector Message)
+ :<|> Capture "topic" Text
+      :> QueryParam "since" Text
+      :> Header "Last-Event-Id" Text
+      :> StreamGet NewlineFraming EventStream (SourceIO ServerEvent)
+
+api = Proxy @Api
+
+data EventStream
+
+instance Accept EventStream where
+    contentType _ = "text" // "event-stream"
+
+instance Show ServerEvent where
+    show _ = "test"
+
+instance MimeRender EventStream ServerEvent where
+  mimeRender _ = maybe "" toLazyByteString . eventToBuilder
+
+instance MimeUnrender EventStream ServerEvent where
+  mimeUnrender _ bs = Right $ RetryEvent 10
+
+data SirenJSON
+instance Accept SirenJSON where
+    contentType _ = "application" // "vnd.siren+json"
+
+instance (ToJSON a) => MimeRender SirenJSON a where
+    mimeRender _ = encode
+
+
 data Config = Config {
     logger :: LoggerSet
   , pool :: Pool
@@ -139,32 +137,42 @@ main :: IO ()
 main = do
     pool <- acquire (100, 1, "")
     logger <- newStdoutLoggerSet defaultBufSize
+    port <- readEnvDef "PORT" 8888 :: IO Int
 
-    use pool $ sql $ fromString $ migrationQueryString "jsonb"
+    manager <- newManager defaultManagerSettings
+    let env = mkClientEnv manager (BaseUrl Http "localhost" port "")
 
-    async . forever $ withConnection pool \conn -> do
-        case conn of
-            Right conn' -> withDequeue "queue_channel" conn' Decode.jsonb 10 10 publish
-            Left e -> error $ show e
+    -- async . forever $ withConnection pool \conn' -> do
+    --     case conn' of
+    --         Left e -> error $ show e
+    --         Right conn -> do
+    --             listen conn $ toPgIdentifier "*"
+    --             waitForNotifications publish conn
 
-    pushLogStrLn logger "listening on port 8888"
-    runEnv 8888 $ logStdoutDev . mkApp $ Config logger pool
+    async . forever $ withClientM (sseClient "*" Nothing Nothing) env $ \e -> case e of
+        Left err -> putStrLn $ "Error: " ++ show err
+        Right rs -> foreach fail (publish "*") rs
+
+    pushLogStrLn logger $ "listening http " <> show port
+    run port $ logStdoutDev . mkApp $ Config logger pool
     where
-        api = Proxy @Api
         mkApp config = serve api $ hoistServer api (`runReaderT` config) server
 
+
+sseClient :: Text -> (Maybe Text) -> (Maybe Text) -> ClientM (SourceIO ServerEvent)
+_ :<|> _ :<|> sseClient = client api
 
 type AppM = ReaderT Config Handler
 
 server :: ServerT Api AppM
 server = postMessage :<|> getMessages :<|> sse
     where
-        postMessage :: MessageInput -> AppM Message
+        postMessage :: (MessageInput Event) -> AppM Message
         postMessage messageInput = do
             pool <- asks pool
             result <- liftIO $ use pool $ do
                 message <- transaction Serializable Write $ Transactional.statement messageInput insertMessage
-                enqueueNotify "queue_channel" Encode.jsonb [view (field @"payload") message]
+                -- enqueueNotify "queue_channel" Encode.jsonb [view (field @"payload") message]
                 return message
             case result of
                 Right message -> return message
@@ -173,10 +181,10 @@ server = postMessage :<|> getMessages :<|> sse
                     liftIO $ pushLogStrLn logset $ show e
                     throwError err500
             where
-                insertMessage :: Statement MessageInput Message
+                insertMessage :: Statement (MessageInput Event) Message
                 insertMessage = Statement sql encoder decoder True
                     where
-                        sql = "insert into schloss.messages (name, payload, topic) values ($1, $2, $3) returning message_id, name, payload, topic, added_at"
+                        sql = "insert into schloss.messages (name, topic, payload) values ($1, $2, $3) returning message_id, name, payload, topic, added_at"
                         encoder = mkParams
                         decoder = Decode.singleRow mkRow
 
@@ -200,15 +208,42 @@ server = postMessage :<|> getMessages :<|> sse
 
         sse :: Text -> Maybe Text -> Maybe Text -> AppM (SourceIO ServerEvent)
         sse topic _since _lastEventId = do
+            logset <- asks logger
+            pool <- asks pool
             return $ fromAction (\_ -> False) $ do
-                threadDelay 1_000_000
-                -- liftIO $ pushLogStrLn logset $ "sse"
-                return CloseEvent
+                liftIO $ withConnection pool \conn' -> do
+                    case conn' of
+                        Left e -> error $ show e
+                        Right conn -> do
+                            listen conn $ toPgIdentifier topic
+                            liftIO $ pushLogStrLn logset $ show topic
+                            fetchEvents conn
 
-publish payload = runReq defaultHttpConfig $ do
-    r <- req POST
-        (https "httpbin.org" /: "post")
-        (ReqBodyJson payload)
-        ignoreResponse
-        mempty
-    liftIO $ print (responseStatusCode r)
+        fetchEvents con = withLibPQConnection con $ forever \pqCon -> do
+          mNotification <- PQ.notifies pqCon
+          case mNotification of
+            Nothing -> do
+              mfd <- PQ.socket pqCon
+              case mfd of
+                Nothing  -> error "Error checking for PostgreSQL notifications"
+                Just fd -> do
+                  void $ threadWaitRead fd
+                  void $ PQ.consumeInput pqCon
+                  return CloseEvent
+            Just notification -> return $ ServerEvent
+                (Just $ string8  "test") -- (PQ.notifyRelname notification))
+                (Just $ string8 "test") -- (PQ.notifyExtra notification)
+                []
+
+
+publish channel payload = do
+    print (channel, payload)
+    let request
+            = setRequestPath "/post"
+            $ setRequestSecure False
+            $ setRequestHost "localhost"
+            $ setRequestPort 8889
+            $ defaultRequest
+
+    httpLBS request
+    pure ()

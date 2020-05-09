@@ -35,6 +35,7 @@ begin
 
         create or replace function schloss.notify_message() returns trigger language plpgsql as $$
         begin
+            perform pg_notify('*', new.message_id::text);
             perform pg_notify(new.topic, new.message_id::text);
             return null;
         end;

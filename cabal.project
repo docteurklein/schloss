@@ -1,4 +1,4 @@
 packages:
   ./
-  ../hasql-pool/
-  ../hkd-lens/
+  ../hasql-pool
+  ../hasql-queue
