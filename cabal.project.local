@@ -28,6 +28,11 @@ source-repository-package
   location: git://github.com/docteurklein/hasql-generic
   tag: 7c930ab
 
+source-repository-package
+  type: git
+  location: git://github.com/docteurklein/hasql-pool
+  tag: d08e15f
+
 -- source-repository-package
 --   type: git
 --   location: git://github.com/jfischoff/hasql-queue
