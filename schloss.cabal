@@ -102,12 +102,12 @@ executable schloss
                , postgresql-binary
                , relude
                -- , req
-               , resource-pool
+               -- , resource-pool
                , servant
                , servant-client
                , servant-client-core
                , servant-server
-               , siren-json
+               -- , siren-json
                , text
                , time
                , transformers
