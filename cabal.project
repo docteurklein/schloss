@@ -2,3 +2,4 @@ packages:
   ./
   -- ../hasql-pool
   -- ../hasql-queue
+  -- ../hasql-generic
